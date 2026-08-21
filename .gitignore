@@ -1,0 +1,37 @@
+# Credential and local configuration
+.env
+.env.*
+!.env.example
+.aws/
+credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.local
+*.local.*
+
+# Logs and generated output
+*.log
+output/
+outputs/
+artifacts/
+media/
+tmp/
+temp/
+
+# Dependencies and caches
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
