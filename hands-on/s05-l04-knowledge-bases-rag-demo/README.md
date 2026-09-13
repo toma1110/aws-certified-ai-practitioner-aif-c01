@@ -18,7 +18,8 @@ Amazon Bedrock Knowledge Basesを使い、次の流れを一つずつ観察し�
 - Knowledge BasesとAmazon S3を操作できる権限
 - 利用する生成モデル、embedding model、Knowledge Basesに必要なmodel access
 - Regionは一つに固定する（講師の検証環境は`us-east-1`）
-- 実習専用の空のS3 bucketを用意できること
+- 実習専用の空のS3 bucketを用意できることを推奨
+- 共有bucketを使う場合は、実習で所有するexact object keyまたはprefixと、変更しないbucket policy・既存objectの境界を記録できること
 - 顧客情報、credential、secret、個人情報を入力しないこと
 
 AWS Consoleの表示やmanaged modelの選択肢は更新される場合があります。画面上の名称が異なるときは、後述の公式documentationで現在の手順を確認してください。
@@ -35,7 +36,7 @@ AWS Consoleの表示やmanaged modelの選択肢は更新される場合があ�
 | Knowledge Base | Knowledge Base名とID |
 | Data source | data source名とID |
 | S3 | 実習専用bucket名とobject key |
-| Vector store | 選択した方式、管理service、indexまたはstore名 |
+| Vector store | `MANAGED`かcustomer-managedか。customer-managedの場合は管理service、index、storeまたはcollection名 |
 | IAM | Console workflowで作成したBedrock service role名 |
 
 この一覧はcleanupで削除対象を特定するために使います。既存resourceや別の実習resourceを一覧へ混ぜないでください。
@@ -67,17 +68,19 @@ Digital download codes are not eligible for return after activation.
 
 account ID、bucket名、presigned URLなどをscreen captureや共有資料へ含めないでください。
 
+共有bucketを使う場合は、実習で作成したexact objectだけを所有対象として記録します。既存objectやbucket policyを実習resourceとして扱わないでください。
+
 ### 2. Managed Knowledge Baseを作る
 
 1. Amazon Bedrock ConsoleでKnowledge Basesを開きます。
 2. Knowledge Baseを新規作成します。
 3. S3をdata sourceに選び、固定入力を置いた場所を指定します。
-4. embedding modelとvector storeは利用可能なmanaged optionを選びます。
+4. embedding modelとvector storeは利用可能なmanaged optionを選びます。画面または取得APIでKnowledge Baseの構成が`MANAGED`であることを確認します。
 5. 必要なservice roleはConsole workflowで作成します。
 6. 作成完了後、Knowledge Baseとdata sourceが利用可能な状態になるまで待ちます。
-7. Knowledge Base名とID、data source名とID、vector storeの方式・管理service・indexまたはstore名、service role名を一覧へ記録します。
+7. Knowledge Base名とID、data source名とID、構成方式、service role名を一覧へ記録します。`MANAGED`で別のvector index/store識別子が表示されない場合は、「別途削除するcustomer-addressable storeなし」と記録します。
 
-実習では一時resourceだけを作り、既存のproduction resourceを再利用しません。
+Knowledge Base、data source、vector store、IAM roleは実習専用の一時resourceとして作成します。S3だけを承認済みの共有bucketに置く場合は、exact object単位の所有境界を先に記録し、既存resourceを変更しません。
 
 ### 3. Data sourceをsyncする
 
@@ -180,21 +183,60 @@ response generationを有効にして同じ質問を送ります。画面上で�
 
 削除前に、作成時に記録した一覧と、現在表示されているRegion・resource名・ID・管理serviceを照合し、実習用resourceだけが対象であることを確認します。既存resourceや他の利用者のresourceを削除しないでください。
 
-1. Knowledge Baseに紐づくdata sourceとmanaged vector index/storeの関係、およびvector storeを管理するserviceを確認します。
-2. Knowledge Baseとdata sourceを削除します。この操作だけではvector store自体は削除されないため、ここではcleanup完了と判断しません。
-3. vector storeを管理するserviceのConsoleまたはSDKで、実習用vector index/storeを明示的に削除し、同じRegionの一覧または取得APIで対象が0件になったことを確認します。
-4. 実習用に自動作成されたBedrock service roleをIAMから削除します。
-5. 実習用S3 objectを削除します。
-6. 実習専用S3 bucketが空であることを確認してbucketを削除します。
-7. 同じRegionでKnowledge Bases一覧を再読込し、対象が0件であることを確認します。
-8. IAMで実習用service role、S3で実習用bucketがそれぞれ検索結果0件であることを確認します。
-9. 最後にvector storeを管理するserviceのConsoleまたはSDKを再確認し、実習用vector storeが0件であることを記録します。CloudFormation、CloudWatch log deliveryなど、作成時に追加されたresourceについても残存がないか確認します。
+最初にKnowledge Baseの管理方式を確認します。cleanupは次の二つに分かれます。
 
-作成時に記録した一覧の各resourceが、該当Regionと管理serviceで0件またはNot foundになったことを確認できた時点でcleanup完了です。
+- **Amazon Bedrock Managed Knowledge Base**: 構成が`MANAGED`で、`storageConfiguration`、vector index ARN、store名などの別resource識別子がありません。この場合、customerが別serviceで削除するvector index/storeはないため、存在しない削除手順を追加しません。
+- **Customer-managed vector store**: OpenSearch Serverless collectionなど、Knowledge Baseとは別に作成したstore、index、collectionを記録済みです。Knowledge Base削除とは別に、その管理serviceでexact resourceを削除します。
+
+この教材で検証した構成は前者の`MANAGED`です。また、cleanup時点でS3 bucketは別用途と共有されていたため、実習で所有するexact objectだけを削除し、bucket、bucket policy、別用途のobjectは保持しました。
+
+### 1. Data sourceを削除する
+
+1. Region、Knowledge Base ID、data source IDを再照合します。
+2. data deletion policyを確認します。削除対象dataも消す場合は`DELETE`であることを確認します。
+3. exact data sourceを削除します。
+4. statusが`DELETING`の間は待ち、取得APIがNot foundを返すまでKnowledge Base削除へ進みません。`DELETE_UNSUCCESSFUL`になった場合はfailure reasonを確認します。
+
+### 2. Knowledge Baseを削除する
+
+1. data sourceが残っていないことと、Knowledge Base ID、Region、管理方式を再確認します。
+2. exact Knowledge Baseを削除します。
+3. 取得APIがNot foundを返し、同じRegionの一覧にも対象IDがないことを確認します。
+
+`MANAGED`の場合、これでKnowledge Base側の削除対象は完了です。customer-managedの場合は、記録した管理serviceで実習専用のvector store、indexまたはcollectionだけを削除し、Not foundまたは一覧0件を確認します。共有storeや他のindexを削除しないでください。
+
+### 3. IAM roleとpolicyを削除する
+
+1. 作成時に記録したBedrock service roleを再取得します。
+2. attached policy、inline policy、instance profileなどの依存関係を確認します。
+3. 実習用に作成されたexact policyだけをdetachします。共有policyはdetachまたは削除しません。
+4. 依存関係が0件になったことを確認してservice roleを削除します。
+5. detachしたcustomer-managed policyが実習専用で、他のrole、user、group、permissions boundaryから使われていない場合だけ、そのexact policyを削除します。
+6. roleと削除対象policyがNot foundになることを確認します。
+
+### 4. S3 objectとbucketの境界を確認する
+
+1. 実習でuploadしたexact object key、size、ETagを再確認します。
+2. exact objectだけを削除し、HeadObjectがNot foundを返すことを確認します。
+3. bucket内のobjectとbucket policyを再確認します。
+4. bucketが実習専用で空であり、共有policyや別resourceからの参照がない場合だけbucketを削除します。
+5. 共有bucketの場合は、bucket、bucket policy、別用途のobjectを変更せず保持します。bucket名に実習用prefixが含まれていても、現在の内容と所有境界を優先します。
+
+### 5. 最終確認を行う
+
+- Knowledge Baseとdata sourceがNot foundである
+- `MANAGED`では別途削除するcustomer-addressable vector storeがないことを記録した、またはcustomer-managed storeのexact resourceがNot foundである
+- 実習専用のIAM roleとpolicyがNot foundである
+- 実習用S3 objectがNot foundである
+- 保持対象の共有bucket、bucket policy、既存objectが変更されていない
+- CloudFormation、CloudWatch log deliveryなど、作成時に記録した追加resourceが残っていない
+
+この一覧を満たし、実習で所有するresourceが残っていないことを確認できた時点でcleanup完了です。共有resourceを保持した場合は、保持理由と所有境界も記録します。
 
 ## 公式AWS documentation
 
 - [Amazon Bedrock Knowledge Bases](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html)
+- [Delete a data source](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-ds-delete.html)
 - [Delete a Knowledge Base](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-delete.html)
 - [Retrieve data and generate AI responses](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-how-retrieval.html)
 - [Test a Knowledge Base](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-test-retrieve.html)
